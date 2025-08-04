@@ -50,6 +50,7 @@ typedef struct ios {
 			unsigned ESIdentify: 1;
 			unsigned FSPermissions: 2; // 1: permissions patch, 2: root access
 			unsigned FlashAccess: 1;
+			unsigned USB2: 2; // 1: EHCI, 2: ehcmodule
 		};
 	};
 } ios;
@@ -517,6 +518,34 @@ bool isvIOS(void) {
 	return SystemInfo.console.latte;
 }
 
+int testUSB2(void) {
+	int fd;
+
+	fd = IOS_Open("/dev/usb123", 0);
+	if (fd >= 0) {
+		IOS_Close(fd);
+		return 2;
+	}
+
+	fd = IOS_Open("/dev/usb2", 0);
+	if (fd >= 0) {
+		IOS_Close(fd);
+		return 2;
+	}
+
+	fd = IOS_Open("/dev/usb/ehc", 0);
+	if (fd >= 0) {
+		IOS_Close(fd);
+		return 2;
+	}
+
+	else if (fd == -1) { // EPERM; we are not USB_VEN
+		return 1;
+	}
+
+	return 0;
+}
+
 int testIOS(int i) {
 	struct ios* ios = &SystemInfo.iosList[i];
 
@@ -531,6 +560,7 @@ int testIOS(int i) {
 	ios->ESIdentify = testESIdenitfy();
 	ios->SignaturePatches = testSignaturePatches();
 	ios->FlashAccess = testFlashAccess();
+	ios->USB2 = testUSB2();
 
 	return 0;
 }
@@ -655,8 +685,11 @@ int main(int argc, const char *argv[]) {
 		} else if (!ios->patches) {
 			writeReport("No patches\n");
 		} else {
+#define print_patch(x, s) { if ((x)++) { writeReport(", "); } writeReport(s); }
 			int x = 0;
-#define     print_patch(x, s) { if ((x)++) { writeReport(", "); } writeReport(s); }
+
+			if (ios->USB2 == 1) print_patch(x, "USB 2.0");
+			if (ios->USB2 >= 2) print_patch(x, "USB 2.0 (ehcmodule)");
 
 			if (ios->SignaturePatches == 1) print_patch(x, "Signature patch");
 			if (ios->SignaturePatches >= 2) print_patch(x, "Trucha bug");
