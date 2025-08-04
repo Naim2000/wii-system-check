@@ -104,6 +104,13 @@ static struct SystemInfo {
 		int revision;
 		int ios;
 	} hbc;
+
+	struct {
+		struct _compat {
+			int installed: 1;
+			uint16_t version;
+		} BC, MIOS, BCNAND, BCWFS;
+	} compat;
 } SystemInfo = {};
 
 int getConsoleInfo() {
@@ -244,10 +251,10 @@ int processInstalledTitles() {
 	for (int i = 0; i < count; i++) {
 		uint64_t title = titles[i];
 		uint32_t viewsize = 0;
-		static uint8_t _view_buffer[offsetof(tmd_view, contents[MAX_NUM_TMD_CONTENTS])];
+		static uint8_t _view_buffer[offsetof(tmd_view, contents[MAX_NUM_TMD_CONTENTS])] [[gnu::aligned(0x20)]];
 		tmd_view *view = (tmd_view *)_view_buffer;
 
-		if ((title - 0x100000002LL) < 256) { // <system title>
+		if ((title >> 32) == 0x00000001) { // <system title>
 			ret = ES_GetTMDViewSize(title, &viewsize);
 			if (ret < 0) {
 				print_error("ES_GetTMDViewSize(%016llx)", ret, title);
@@ -268,7 +275,7 @@ int processInstalledTitles() {
 				SystemInfo.sysmenu.ios = view->sys_version;
 			}
 
-			if (title - 0x100000003LL < 253) {
+			else if (title - 0x100000003LL < 253) { // IOS
 				int slot = title & 0xFF;
 				struct ios* ios = &SystemInfo.iosList[slot];
 
@@ -296,21 +303,37 @@ int processInstalledTitles() {
 							struct cios_info* cios = (struct cios_info *)index0buffer;
 							if (cios->magic == CIOS_HDR_MAGIC && cios->header_version == CIOS_HDR_VERSION)
 								memcpy(&ios->cios, index0buffer, sizeof index0buffer);
-
 						}
 
 						break;
 					}
 				}
 			}
+
+
+			else {
+#define is_compat(title, x, c, v) \
+				if (title == (0x100000000LL | (x))) { \
+					(c)->installed = true; \
+					(c)->version = (v)->title_version; \
+				}
+
+				is_compat(title, 0x100, &SystemInfo.compat.BC, view);
+				is_compat(title, 0x101, &SystemInfo.compat.MIOS, view);
+
+				is_compat(title, 0x200, &SystemInfo.compat.BCNAND, view);
+				is_compat(title, 0x201, &SystemInfo.compat.BCWFS, view);
+
+#undef is_compat
+			}
 		}
+
 		else if (title >> 32 == 0x00010001) {
 			for (const struct hbcVersion* hbc = hbcversions; hbc->titleID; hbc++) {
 				if ((title & 0xFFFFFFFF) == hbc->titleID) {
 					ret = ES_GetTMDViewSize(title, &viewsize);
 					if (ret < 0) {
 						print_error("ES_GetTMDViewSize(%016llx)", ret, title);
-						if (ret == -106 && title != 0x100000002LL) ES_DeleteTitle(title);
 						continue;
 					}
 
@@ -702,9 +725,28 @@ int main(int argc, const char *argv[]) {
 			if (ios->FlashAccess) print_patch(x, "/dev/flash");
 
 			writeReport("\n");
+#undef print_patch
 		}
 	}
 
+	writeReport("\n");
+
+#define print_compat(name, c) \
+	{ \
+		if ((c).installed) \
+			writeReportF("%s v%hu\n", name, (c).version); \
+		else \
+			writeReportF("%s not installed?\n", name); \
+	}
+
+	if (!SystemInfo.console.latte) {
+		print_compat("BC", SystemInfo.compat.BC);
+		print_compat("MIOS", SystemInfo.compat.MIOS);
+	} else {
+		print_compat("BC-NAND", SystemInfo.compat.BCNAND);
+		print_compat("BC-WFS", SystemInfo.compat.BCWFS);
+	}
+#undef print_compat
 
 	printf("report buffer length=%i\n", reportBufferLen);
 	fatInitDefault();
